@@ -80,22 +80,33 @@ void autonomous() {
  */
 void opcontrol() {
     pros::Controller master(pros::E_CONTROLLER_MASTER);
-    pros::MotorGroup left_mg({-12, 13});
+    pros::MotorGroup left_mg({-8, -9, 10});
+    pros::MotorGroup right_mg({3, 4, -2});
 
     left_mg.set_encoder_units_all(pros::E_MOTOR_ENCODER_ROTATIONS);
+    right_mg.set_encoder_units_all(pros::E_MOTOR_ENCODER_ROTATIONS);
 
-    double maxVelocity = 200.0;
+    double maxVelocity = 1.0;
+
+    double trackWidth = 1.0;
 
     OneDofVelocitySystem sys;
 
-    sys.characterize([&left_mg]() { return left_mg.get_actual_velocity(); }, [master, &left_mg]() mutable {
+    sys.characterize([&left_mg, &right_mg]() {
+                         return (left_mg.get_actual_velocity() - right_mg.get_actual_velocity()) / 200.0;
+                     }, [master, &left_mg, &right_mg]() mutable {
                          double u = master.get_analog(ANALOG_RIGHT_X) / 127.0;
                          left_mg.move_voltage(12000.0 * u);
+                         right_mg.move_voltage(-12000.0 * u);
                          return u;
                      }, [&master]() { return master.get_digital(DIGITAL_A); });
 
     double lastInput = 0.0;
     double acceleration = 0.0;
+
+    auto ff = sys.getFF();
+
+    pros::lcd::print(0, "Kv, Ka, Ks: %f, %f, %f", ff(0, 0), ff(0, 1), ff(0, 2));
 
     while (true) {
         const double velocity = master.get_analog(ANALOG_RIGHT_X) * maxVelocity / 127.0;
@@ -103,7 +114,9 @@ void opcontrol() {
 
         acceleration = (velocity - lastInput) / 0.01;
 
-        left_mg.move(sys.evaluate(Eigen::Vector3d(velocity, acceleration, signnum(velocity))));
+        double voltage = sys.evaluate(Eigen::Vector3d(velocity, acceleration, signnum(velocity))) * 12000;
+        left_mg.move_voltage(voltage);
+        right_mg.move_voltage(-voltage);
 
         lastInput = velocity;
 

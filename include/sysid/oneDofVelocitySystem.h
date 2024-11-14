@@ -45,9 +45,15 @@ public:
         double K_a = -K_v * 0.01 / log(solution(0));
 
         ff = {K_v, K_a, K_s};
+
+        std::cout << ff << std::endl;
     }
 
     double evaluate(Eigen::Vector3d x) const {
         return ff * x;
+    }
+
+    Eigen::RowVector3d getFF() {
+        return ff;
     }
 };
