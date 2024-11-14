@@ -174,11 +174,11 @@ void opcontrol() {
 
     Eigen::Vector2d ffLinear = {
         (1 - solutionLinear(0)) / solutionLinear(1),
-        (1 - solutionLinear(0)) * 0.01 / (log(solutionLinear(0) * solutionLinear(1)))
+        (solutionLinear(0) - 1.0) * 0.01 / (log(solutionLinear(0) * solutionLinear(1)))
     };
     Eigen::Vector2d ffAngular = {
         (1 - solutionAngular(0)) / solutionAngular(1),
-        (1 - solutionAngular(0)) * 0.01 / (log(solutionAngular(0) * solutionAngular(1)))
+        (solutionAngular(0) - 1.0) * 0.01 / (log(solutionAngular(0) * solutionAngular(1)))
     };
 
     // Make a matrix with the linear and angular solutions
