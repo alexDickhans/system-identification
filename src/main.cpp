@@ -70,6 +70,25 @@ double signnum(double x) {
     return 0;
 }
 
+std::pair<double, double> desaturate(double x, double y) {
+    double max = std::max(x, y);
+
+    if (abs(max) > 1.0) {
+        return std::make_pair(x / max, y / max);
+    }
+    return std::make_pair(x, y);
+}
+
+std::pair<double, double> convert(std::pair<double, double> p) {
+    return std::make_pair((p.first + p.second) / 2.0, (p.first - p.second) / 2.0);
+}
+
+static std::string toString(const Eigen::MatrixXd &mat) {
+    std::stringstream ss;
+    ss << mat;
+    return ss.str();
+}
+
 /**
  * Runs the operator control code. This function will be started in its own task
  * with the default priority and stack size whenever the robot is enabled via
@@ -85,78 +104,108 @@ double signnum(double x) {
  */
 void opcontrol() {
     pros::Controller master(pros::E_CONTROLLER_MASTER);
-    pros::MotorGroup left_mg({-12, 13});
+    pros::MotorGroup left_mg({-8, -9, 10});
+    pros::MotorGroup right_mg({3, 4, -2});
 
     left_mg.set_encoder_units_all(pros::E_MOTOR_ENCODER_ROTATIONS);
+    right_mg.set_encoder_units_all(pros::E_MOTOR_ENCODER_ROTATIONS);
 
-    std::vector<double> velocity;
-    std::vector<double> acceleration;
-    std::vector<double> u;
+    std::vector<std::pair<double, double> > velocity;
+    std::vector<std::pair<double, double> > u;
 
-    double lastVelocity = 0.0;
-    double maxVelocity = 0.0;
+    double maxLinearVelocity = 0.0, maxAngularVelocity = 0.0;
 
     while (!master.get_digital(DIGITAL_A)) {
-        pros::lcd::print(0, "%d %d %d", (pros::lcd::read_buttons() & LCD_BTN_LEFT) >> 2,
-                         (pros::lcd::read_buttons() & LCD_BTN_CENTER) >> 1,
-                         (pros::lcd::read_buttons() & LCD_BTN_RIGHT) >> 0); // Prints status of the emulated screen LCDs
-
         // Arcade control scheme
-        int turn = master.get_analog(ANALOG_RIGHT_X); // Gets the turn left/right from right joystick
+        double linear = master.get_analog(ANALOG_LEFT_Y) / 127.0; // Gets the turn left/right from right joystick
+        double turn = master.get_analog(ANALOG_RIGHT_X) / 127.0; // Gets the turn left/right from right joystick
 
-        left_mg.move(turn);
+        auto desaturated = desaturate(linear + turn, linear - turn);
 
-        u.emplace_back(turn);
-        velocity.emplace_back(left_mg.get_actual_velocity());
-        acceleration.emplace_back((left_mg.get_actual_velocity() - lastVelocity) / 0.01);
+        left_mg.move_voltage(desaturated.first * 12000);
+        right_mg.move_voltage(desaturated.second * 12000);
 
-        if (abs(left_mg.get_actual_velocity()) > maxVelocity) {
-            maxVelocity = abs(left_mg.get_actual_velocity());
+        auto converted_input = convert(desaturated);
+        auto converted_output = convert(std::make_pair(left_mg.get_actual_velocity(), right_mg.get_actual_velocity()));
+
+        u.emplace_back(converted_input.first, converted_input.second);
+        velocity.emplace_back(converted_output.first, converted_output.second);
+
+        if (abs(converted_output.first) > maxLinearVelocity) {
+            maxLinearVelocity = abs(converted_output.first);
+        }
+
+        if (abs(converted_output.second) > maxAngularVelocity) {
+            maxAngularVelocity = abs(converted_output.second);
         }
 
         pros::delay(10); // Run for 20 ms then update
     }
 
-    Eigen::MatrixXd A = Eigen::MatrixXd::Zero(velocity.size() - 1, 3);
-    Eigen::MatrixXd b = Eigen::VectorXd::Zero(velocity.size() - 1);
+    Eigen::MatrixXd ALinear = Eigen::MatrixXd::Zero(velocity.size() - 1, 2);
+    Eigen::MatrixXd bLinear = Eigen::VectorXd::Zero(velocity.size() - 1);
 
     for (int i = 0; i < velocity.size() - 1; i++) {
-        A(i, 0) = velocity[i];
-        A(i, 1) = u[i];
-        A(i, 2) = -signnum(velocity[i]);
-        b(i) = velocity[i + 1];
+        ALinear(i, 0) = velocity[i].first;
+        ALinear(i, 1) = u[i].first;
+        bLinear(i) = velocity[i + 1].first;
     }
 
-    Eigen::VectorXd solution = A.template bdcSvd<Eigen::ComputeThinU | Eigen::ComputeThinV>().solve(b);
+    Eigen::MatrixXd AAngular = Eigen::MatrixXd::Zero(velocity.size() - 1, 2);
+    Eigen::MatrixXd bAngular = Eigen::VectorXd::Zero(velocity.size() - 1);
 
-    std::cout << "The least-squares solution is:\n"
-            << solution << std::endl;
+    for (int i = 0; i < velocity.size() - 1; i++) {
+        AAngular(i, 0) = velocity[i].second;
+        AAngular(i, 1) = u[i].second;
+        bAngular(i) = velocity[i + 1].second;
+    }
 
-    double K_s = -solution(2) / solution(1);
-    double K_v = (1 - solution(0)) / solution(1);
-    double K_a = -K_v * 0.01 / log(solution(0));
+    std::cout << ALinear << std::endl;
+    std::cout << bLinear << std::endl;
+    std::cout << AAngular << std::endl;
+    std::cout << bAngular << std::endl;
 
-    std::cout << "K_s: " << K_s << std::endl;
-    std::cout << "K_v: " << K_v << std::endl;
-    std::cout << "K_a: " << K_a << std::endl;
+    Eigen::VectorXd solutionLinear = ALinear.template bdcSvd<Eigen::ComputeThinU | Eigen::ComputeThinV>().
+            solve(bLinear);
+    Eigen::VectorXd solutionAngular = AAngular.template bdcSvd<Eigen::ComputeThinU | Eigen::ComputeThinV>().
+            solve(bAngular);
 
-    Eigen::Vector3d ff = {K_v, K_a, K_s};
+    std::pair<double, double> last{0.0, 0.0};
 
-    double lastInput = 0.0;
+    Eigen::Vector2d ffLinear = {
+        (1 - solutionLinear(0)) / solutionLinear(1),
+        (1 - solutionLinear(0)) * 0.01 / (log(solutionLinear(0) * solutionLinear(1)))
+    };
+    Eigen::Vector2d ffAngular = {
+        (1 - solutionAngular(0)) / solutionAngular(1),
+        (1 - solutionAngular(0)) * 0.01 / (log(solutionAngular(0) * solutionAngular(1)))
+    };
+
+    // Make a matrix with the linear and angular solutions
+    Eigen::Matrix2d solution;
+    solution.col(0) = ffLinear;
+    solution.col(1) = ffAngular;
+
+    pros::lcd::print(0, "%s", toString(solution)); // Prints status of the emulated screen LCDs
 
     while (true) {
-        pros::lcd::print(0, "%d %d %d", (pros::lcd::read_buttons() & LCD_BTN_LEFT) >> 2,
-                         (pros::lcd::read_buttons() & LCD_BTN_CENTER) >> 1,
-                         (pros::lcd::read_buttons() & LCD_BTN_RIGHT) >> 0); // Prints status of the emulated screen LCDs
 
         // Arcade control scheme
-        int turn = master.get_analog(ANALOG_RIGHT_X) * maxVelocity / 127.0; // Gets the turn left/right from right joystick
+        double linear = master.get_analog(ANALOG_LEFT_Y) * maxLinearVelocity / 127.0;
+        // Gets the turn left/right from right joystick
+        double turn = master.get_analog(ANALOG_RIGHT_X) * maxAngularVelocity / 127.0;
+        // Gets the turn left/right from right joystick
 
-        double acceleration = (turn - lastInput) / 0.01;
+        auto desaturated = convert(desaturate(linear + turn, linear - turn));
 
-        left_mg.move(Eigen::RowVector3d(turn, acceleration, signnum(turn)) * ff);
+        Eigen::RowVector2d linearRow = {desaturated.first, (desaturated.first - last.first) / 0.01};
+        Eigen::RowVector2d angularRow = {desaturated.second, (desaturated.second - last.second) / 0.01};
 
-        lastInput = turn;
+        double linearResult = linearRow * ffLinear;
+        double angularResult = angularRow * ffAngular;
+
+        left_mg.move((linearResult + angularResult) * 12000);
+        right_mg.move((linearResult - angularResult) * 12000);
 
         pros::delay(10); // Run for 20 ms then update
     }
