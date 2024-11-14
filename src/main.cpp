@@ -1,5 +1,6 @@
 #include "main.h"
 #include "Eigen/Dense"
+#include "sysid/oneDofVelocitySystem.h"
 
 /**
  * A callback function for LLEMU's center button.
