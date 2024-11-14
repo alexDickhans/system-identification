@@ -88,8 +88,9 @@ void opcontrol() {
 
     OneDofVelocitySystem sys;
 
-    sys.characterize([&left_mg]() { return left_mg.get_actual_velocity(); }, [master]() mutable {
+    sys.characterize([&left_mg]() { return left_mg.get_actual_velocity(); }, [master, &left_mg]() mutable {
                          double u = master.get_analog(ANALOG_RIGHT_X) / 127.0;
+                         left_mg.move_voltage(12000.0 * u);
                          return u;
                      }, [&master]() { return master.get_digital(DIGITAL_A); });
 
