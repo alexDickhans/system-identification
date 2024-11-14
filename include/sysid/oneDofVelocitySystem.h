@@ -5,14 +5,15 @@
 class OneDofVelocitySystem {
 public:
     Eigen::RowVector3d ff;
+
 public:
-    explicit OneDofVelocitySystem(const Eigen::Vector3d &ff)
-        : ff(ff) {
+    explicit OneDofVelocitySystem(const Eigen::Vector3d &ff) : ff(ff) {
     }
 
     OneDofVelocitySystem() = default;
 
-    void characterize(const std::function<double()>& x, const std::function<double()>& u, const std::function<bool()>& stop) {
+    void characterize(const std::function<double()> &x, const std::function<double()> &u,
+                      const std::function<bool()> &stop) {
         std::vector<double> xRecorded;
         std::vector<double> uRecorded;
 
@@ -43,7 +44,7 @@ public:
         double K_v = (1 - solution(0)) / solution(1);
         double K_a = -K_v * 0.01 / log(solution(0));
 
-        ff = {K_v, K_a, K_a};
+        ff = {K_v, K_a, K_s};
     }
 
     double evaluate(Eigen::Vector3d x) const {
