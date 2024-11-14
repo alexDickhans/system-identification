@@ -65,12 +65,6 @@ void competition_initialize() {
 void autonomous() {
 }
 
-double signnum(double x) {
-    if (x > 0) return 1;
-    if (x < 0) return -1;
-    return 0;
-}
-
 /**
  * Runs the operator control code. This function will be started in its own task
  * with the default priority and stack size whenever the robot is enabled via
@@ -90,74 +84,27 @@ void opcontrol() {
 
     left_mg.set_encoder_units_all(pros::E_MOTOR_ENCODER_ROTATIONS);
 
-    std::vector<double> velocity;
-    std::vector<double> acceleration;
-    std::vector<double> u;
+    double maxVelocity = 200.0;
 
-    double lastVelocity = 0.0;
-    double maxVelocity = 0.0;
+    OneDofVelocitySystem sys;
 
-    while (!master.get_digital(DIGITAL_A)) {
-        pros::lcd::print(0, "%d %d %d", (pros::lcd::read_buttons() & LCD_BTN_LEFT) >> 2,
-                         (pros::lcd::read_buttons() & LCD_BTN_CENTER) >> 1,
-                         (pros::lcd::read_buttons() & LCD_BTN_RIGHT) >> 0); // Prints status of the emulated screen LCDs
-
-        // Arcade control scheme
-        int turn = master.get_analog(ANALOG_RIGHT_X); // Gets the turn left/right from right joystick
-
-        left_mg.move(turn);
-
-        u.emplace_back(turn);
-        velocity.emplace_back(left_mg.get_actual_velocity());
-        acceleration.emplace_back((left_mg.get_actual_velocity() - lastVelocity) / 0.01);
-
-        if (abs(left_mg.get_actual_velocity()) > maxVelocity) {
-            maxVelocity = abs(left_mg.get_actual_velocity());
-        }
-
-        pros::delay(10); // Run for 20 ms then update
-    }
-
-    Eigen::MatrixXd A = Eigen::MatrixXd::Zero(velocity.size() - 1, 3);
-    Eigen::MatrixXd b = Eigen::VectorXd::Zero(velocity.size() - 1);
-
-    for (int i = 0; i < velocity.size() - 1; i++) {
-        A(i, 0) = velocity[i];
-        A(i, 1) = u[i];
-        A(i, 2) = -signnum(velocity[i]);
-        b(i) = velocity[i + 1];
-    }
-
-    Eigen::VectorXd solution = A.template bdcSvd<Eigen::ComputeThinU | Eigen::ComputeThinV>().solve(b);
-
-    std::cout << "The least-squares solution is:\n"
-            << solution << std::endl;
-
-    double K_s = -solution(2) / solution(1);
-    double K_v = (1 - solution(0)) / solution(1);
-    double K_a = -K_v * 0.01 / log(solution(0));
-
-    std::cout << "K_s: " << K_s << std::endl;
-    std::cout << "K_v: " << K_v << std::endl;
-    std::cout << "K_a: " << K_a << std::endl;
-
-    Eigen::Vector3d ff = {K_v, K_a, K_s};
+    sys.characterize([&left_mg]() { return left_mg.get_actual_velocity(); }, [master]() mutable {
+                         double u = master.get_analog(ANALOG_RIGHT_X) / 127.0;
+                         return u;
+                     }, [&master]() { return master.get_digital(DIGITAL_A); });
 
     double lastInput = 0.0;
+    double acceleration = 0.0;
 
     while (true) {
-        pros::lcd::print(0, "%d %d %d", (pros::lcd::read_buttons() & LCD_BTN_LEFT) >> 2,
-                         (pros::lcd::read_buttons() & LCD_BTN_CENTER) >> 1,
-                         (pros::lcd::read_buttons() & LCD_BTN_RIGHT) >> 0); // Prints status of the emulated screen LCDs
+        const double velocity = master.get_analog(ANALOG_RIGHT_X) * maxVelocity / 127.0;
+        // Gets the turn left/right from right joystick
 
-        // Arcade control scheme
-        int turn = master.get_analog(ANALOG_RIGHT_X) * maxVelocity / 127.0; // Gets the turn left/right from right joystick
+        acceleration = (velocity - lastInput) / 0.01;
 
-        double acceleration = (turn - lastInput) / 0.01;
+        left_mg.move(sys.evaluate(Eigen::Vector3d(velocity, acceleration, signnum(velocity))));
 
-        left_mg.move(Eigen::RowVector3d(turn, acceleration, signnum(turn)) * ff);
-
-        lastInput = turn;
+        lastInput = velocity;
 
         pros::delay(10); // Run for 20 ms then update
     }
