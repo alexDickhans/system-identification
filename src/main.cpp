@@ -88,8 +88,6 @@ void opcontrol() {
 
     double maxVelocity = 1.0;
 
-    double trackWidth = 1.0;
-
     OneDofVelocitySystem sys;
 
     sys.characterize([&left_mg, &right_mg]() {
