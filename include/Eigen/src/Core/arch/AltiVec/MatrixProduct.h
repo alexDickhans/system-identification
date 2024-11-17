@@ -1444,7 +1444,7 @@ struct dhs_cpack<double, DataMapper, Packet, PacketC, StorageOrder, Conjugate, P
 };
 
 /**************
- * GEMM utils *
+ * GEMM utils.h *
  **************/
 
 // 512-bits rank1-update of acc. It can either positive or negative accumulate (useful for complex gemm).
